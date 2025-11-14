@@ -5,11 +5,12 @@ FastAPI主应用
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import uvicorn
 import os
+import json
 
 from rag_service import rag_service
 from config import settings
@@ -125,7 +126,7 @@ async def health_check():
 @app.post("/chat", response_model=QuestionResponse, tags=["对话"])
 async def chat(request: QuestionRequest):
     """
-    对话接口
+    对话接口（非流式）
     
     基于上传的PDF文档回答用户问题
     
@@ -163,6 +164,46 @@ async def chat(request: QuestionRequest):
             status_code=500,
             detail=f"处理问题时发生错误: {str(e)}"
         )
+
+
+@app.post("/chat/stream", tags=["对话"])
+async def chat_stream(request: QuestionRequest):
+    """
+    流式对话接口
+    
+    基于上传的PDF文档回答用户问题，采用流式输出
+    
+    - **question**: 用户的问题（必填）
+    
+    返回: Server-Sent Events (SSE) 流
+    """
+    if not rag_service._initialized:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG服务尚未初始化完成，请稍后再试"
+        )
+    
+    async def generate():
+        try:
+            for chunk in rag_service.query_stream(request.question):
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            error_data = {
+                "type": "error",
+                "content": f"处理问题时发生错误: {str(e)}"
+            }
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.post("/reset", tags=["管理"])

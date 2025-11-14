@@ -143,6 +143,22 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
+        .assistant-text {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .assistant-text.typing::after {
+            content: '▋';
+            animation: blink 1s infinite;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
         .sources {
             margin-top: 15px;
             padding: 12px;
@@ -390,7 +406,7 @@
             }
         }
 
-        // 发送问题
+        // 发送问题（流式）
         async function sendQuestion() {
             const input = document.getElementById('question-input');
             const question = input.value.trim();
@@ -412,8 +428,17 @@
             // 设置加载状态
             setLoading(true);
             
+            // 创建空的助手消息容器
+            const messageDiv = createAssistantMessageContainer();
+            const contentDiv = messageDiv.querySelector('.assistant-text');
+            let fullAnswer = '';
+            let sources = null;
+            
+            // 添加打字机效果的光标
+            contentDiv.classList.add('typing');
+            
             try {
-                const response = await fetch(`${API_BASE_URL}/chat`, {
+                const response = await fetch(`${API_BASE_URL}/chat/stream`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -425,13 +450,59 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 
-                const data = await response.json();
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
                 
-                // 添加助手回复
-                addMessage('assistant', data.answer, data.sources);
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') {
+                                continue;
+                            }
+                            
+                            try {
+                                const parsed = JSON.parse(data);
+                                
+                                if (parsed.type === 'token') {
+                                    fullAnswer += parsed.content;
+                                    contentDiv.textContent = fullAnswer;
+                                    // 自动滚动到底部
+                                    const chatArea = document.getElementById('chat-area');
+                                    chatArea.scrollTop = chatArea.scrollHeight;
+                                } else if (parsed.type === 'sources') {
+                                    sources = parsed.content;
+                                } else if (parsed.type === 'error') {
+                                    throw new Error(parsed.content);
+                                }
+                            } catch (e) {
+                                if (e instanceof SyntaxError) {
+                                    continue;
+                                }
+                                throw e;
+                            }
+                        }
+                    }
+                }
+                
+                // 移除打字机光标
+                contentDiv.classList.remove('typing');
+                
+                // 添加来源信息
+                if (sources && sources.length > 0) {
+                    addSourcesToMessage(messageDiv, sources);
+                }
                 
             } catch (error) {
                 console.error('Error:', error);
+                contentDiv.classList.remove('typing');
+                messageDiv.remove();
                 showError('抱歉，发生了错误。请确保服务器正在运行。');
             } finally {
                 setLoading(false);
@@ -468,6 +539,42 @@
             
             chatArea.appendChild(messageDiv);
             chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // 创建助手消息容器（用于流式输出）
+        function createAssistantMessageContainer() {
+            const chatArea = document.getElementById('chat-area');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <div class="assistant-text"></div>
+                </div>
+            `;
+            
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+            return messageDiv;
+        }
+
+        // 给消息添加来源信息
+        function addSourcesToMessage(messageDiv, sources) {
+            const messageContent = messageDiv.querySelector('.message-content');
+            
+            const sourcesHTML = `
+                <div class="sources">
+                    <div class="sources-title">📚 参考来源</div>
+                    ${sources.map(source => `
+                        <div class="source-item">
+                            <span class="source-page">第${source.page}页</span>: 
+                            ${source.content}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            
+            messageContent.insertAdjacentHTML('beforeend', sourcesHTML);
         }
 
         // 显示错误消息

@@ -42,7 +42,7 @@ class RAGService:
         
         # 初始化LLM
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-2.5-flash-lite",
             google_api_key=settings.google_api_key,
             temperature=0.7,
             convert_system_message_to_human=True
@@ -136,6 +136,57 @@ class RAGService:
             "answer": result["result"],
             "sources": sources,
             "question": question
+        }
+    
+    def query_stream(self, question: str):
+        """
+        执行流式RAG查询
+        
+        Args:
+            question: 用户问题
+            
+        Yields:
+            流式生成的文本块和来源文档
+        """
+        if not self._initialized:
+            self.initialize()
+        
+        # 先检索相关文档
+        retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+        docs = retriever.invoke(question)
+        
+        # 构建上下文
+        context = "\n\n".join([doc.page_content for doc in docs])
+        
+        # 构建提示词
+        prompt = f"""基于以下文档内容回答问题。如果文档中没有相关信息，请说明无法从文档中找到答案。
+
+文档内容:
+{context}
+
+问题: {question}
+
+答案:"""
+        
+        # 流式生成答案
+        for chunk in self.llm.stream(prompt):
+            if hasattr(chunk, 'content'):
+                yield {
+                    "type": "token",
+                    "content": chunk.content
+                }
+        
+        # 发送来源文档信息
+        sources = []
+        for doc in docs:
+            sources.append({
+                "page": doc.metadata.get("page", "未知"),
+                "content": doc.page_content[:200] + "..."
+            })
+        
+        yield {
+            "type": "sources",
+            "content": sources
         }
     
     def reset_vectorstore(self):
