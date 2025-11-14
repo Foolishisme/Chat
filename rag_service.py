@@ -61,12 +61,12 @@ class RAGService:
             print("创建新的向量数据库...")
             self._load_and_index_documents()
         
-        # 创建检索QA链
+        # 创建检索QA链（优化策略：增加返回数量）
         self.qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
             chain_type="stuff",
             retriever=self.vectorstore.as_retriever(
-                search_kwargs={"k": 3}  # 返回最相关的3个文档片段
+                search_kwargs={"k": 5}  # 返回最相关的5个文档片段，提供更丰富上下文
             ),
             return_source_documents=True
         )
@@ -87,10 +87,10 @@ class RAGService:
         documents = loader.load()
         print(f"成功加载 {len(documents)} 页文档")
         
-        # 文本分割
+        # 文本分割（优化策略：小块+多返回）
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,  # 每个文本块的大小
-            chunk_overlap=200,  # 文本块之间的重叠
+            chunk_size=600,  # 更小的块，检索更精准
+            chunk_overlap=100,  # 更小的重叠，减少冗余
             length_function=len,
         )
         splits = text_splitter.split_documents(documents)
@@ -151,8 +151,8 @@ class RAGService:
         if not self._initialized:
             self.initialize()
         
-        # 先检索相关文档
-        retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+        # 先检索相关文档（优化策略：增加返回数量）
+        retriever = self.vectorstore.as_retriever(search_kwargs={"k": 5})
         docs = retriever.invoke(question)
         
         # 构建上下文
