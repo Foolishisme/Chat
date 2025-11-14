@@ -2,15 +2,17 @@
 FastAPI主应用
 提供RAG对话系统的RESTful API接口
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict
 import uvicorn
 import os
 import json
+import uuid
+from datetime import datetime
 
 from rag_service import rag_service
 from config import settings
@@ -39,15 +41,22 @@ app.add_middleware(
 )
 
 
+# Session管理（内存存储，支持多用户会话）
+sessions: Dict[str, List[Dict]] = {}  # {session_id: [{"role": "user/assistant", "content": "...", "timestamp": "..."}]}
+MAX_HISTORY = 10  # 最多保留10轮对话（20条消息）
+
+
 # 请求/响应模型
 class QuestionRequest(BaseModel):
     """问题请求模型"""
     question: str = Field(..., description="用户的问题", min_length=1)
+    session_id: Optional[str] = Field(None, description="会话ID，用于保持对话历史")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "question": "文档的主要内容是什么？"
+                "question": "文档的主要内容是什么？",
+                "session_id": "550e8400-e29b-41d4-a716-446655440000"
             }
         }
 
@@ -84,6 +93,50 @@ class StatusResponse(BaseModel):
     status: str = Field(..., description="服务状态")
     message: str = Field(..., description="状态信息")
     initialized: bool = Field(..., description="是否已初始化")
+
+
+# Session辅助函数
+def get_or_create_session(session_id: Optional[str]) -> str:
+    """获取或创建会话ID"""
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    if session_id not in sessions:
+        sessions[session_id] = []
+    return session_id
+
+
+def get_session_history(session_id: str) -> List[Dict]:
+    """获取会话历史（最近MAX_HISTORY轮对话）"""
+    history = sessions.get(session_id, [])
+    # 只保留最近的MAX_HISTORY轮对话（每轮2条消息：user + assistant）
+    return history[-(MAX_HISTORY * 2):]
+
+
+def add_to_session(session_id: str, role: str, content: str):
+    """添加消息到会话历史"""
+    if session_id not in sessions:
+        sessions[session_id] = []
+    sessions[session_id].append({
+        "role": role,
+        "content": content,
+        "timestamp": datetime.now().isoformat()
+    })
+    # 保持最大历史长度
+    if len(sessions[session_id]) > MAX_HISTORY * 2:
+        sessions[session_id] = sessions[session_id][-(MAX_HISTORY * 2):]
+
+
+def format_history_for_prompt(history: List[Dict]) -> str:
+    """格式化历史对话为提示词"""
+    if not history:
+        return ""
+    
+    formatted = "历史对话:\n"
+    for msg in history:
+        role_name = "用户" if msg["role"] == "user" else "AI助手"
+        formatted += f"{role_name}: {msg['content']}\n"
+    formatted += "\n"
+    return formatted
 
 
 # API端点
@@ -169,13 +222,14 @@ async def chat(request: QuestionRequest):
 @app.post("/chat/stream", tags=["对话"])
 async def chat_stream(request: QuestionRequest):
     """
-    流式对话接口
+    流式对话接口（支持对话记忆）
     
     基于上传的PDF文档回答用户问题，采用流式输出
     
     - **question**: 用户的问题（必填）
+    - **session_id**: 会话ID（可选，不提供则自动创建新会话）
     
-    返回: Server-Sent Events (SSE) 流
+    返回: Server-Sent Events (SSE) 流，包含session_id
     """
     if not rag_service._initialized:
         raise HTTPException(
@@ -183,10 +237,33 @@ async def chat_stream(request: QuestionRequest):
             detail="RAG服务尚未初始化完成，请稍后再试"
         )
     
+    # 获取或创建会话ID
+    session_id = get_or_create_session(request.session_id)
+    
+    # 获取历史对话
+    history = get_session_history(session_id)
+    history_text = format_history_for_prompt(history)
+    
+    # 添加用户问题到历史
+    add_to_session(session_id, "user", request.question)
+    
     async def generate():
         try:
-            for chunk in rag_service.query_stream(request.question):
+            # 先发送session_id
+            yield f"data: {json.dumps({'type': 'session_id', 'content': session_id}, ensure_ascii=False)}\n\n"
+            
+            # 收集完整答案用于保存到历史
+            full_answer = ""
+            
+            # 流式生成答案（传递历史对话）
+            for chunk in rag_service.query_stream(request.question, history_text):
+                if chunk.get("type") == "token":
+                    full_answer += chunk.get("content", "")
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+            
+            # 添加AI回答到历史
+            add_to_session(session_id, "assistant", full_answer)
+            
             yield "data: [DONE]\n\n"
         except Exception as e:
             error_data = {
@@ -204,6 +281,100 @@ async def chat_stream(request: QuestionRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+@app.post("/session/new", tags=["会话管理"])
+async def new_session():
+    """
+    创建新会话
+    
+    返回新的session_id，用于开始全新的对话
+    """
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = []
+    return {
+        "status": "success",
+        "session_id": session_id,
+        "message": "新会话已创建"
+    }
+
+
+@app.delete("/session/{session_id}", tags=["会话管理"])
+async def delete_session(session_id: str):
+    """
+    删除指定会话
+    
+    清空该会话的对话历史
+    """
+    if session_id in sessions:
+        del sessions[session_id]
+        return {
+            "status": "success",
+            "message": f"会话 {session_id} 已删除"
+        }
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"会话 {session_id} 不存在"
+        )
+
+
+@app.get("/session/{session_id}/history", tags=["会话管理"])
+async def get_session_history_endpoint(session_id: str):
+    """
+    获取指定会话的历史记录
+    """
+    if session_id not in sessions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"会话 {session_id} 不存在"
+        )
+    return {
+        "session_id": session_id,
+        "history": sessions[session_id],
+        "count": len(sessions[session_id])
+    }
+
+
+@app.post("/upload", tags=["文档管理"])
+async def upload_document(file: UploadFile = File(...)):
+    """
+    上传PDF文档
+    
+    上传新的PDF文档并重建向量索引
+    
+    - **file**: PDF文件（必填）
+    """
+    # 验证文件类型
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(
+            status_code=400,
+            detail="只支持PDF文件格式"
+        )
+    
+    try:
+        # 保存文件
+        file_path = os.path.join(os.path.dirname(settings.pdf_document_path), file.filename)
+        
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 重新加载并索引文档
+        rag_service.load_document(file_path)
+        
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "message": f"文档 {file.filename} 已上传并索引完成",
+            "size": len(content)
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"上传文档时发生错误: {str(e)}"
+        )
 
 
 @app.post("/reset", tags=["管理"])

@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RAG智能对话系统</title>
+    <!-- Marked.js - Markdown渲染 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js - 代码高亮 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -60,6 +65,58 @@
             align-items: center;
             font-size: 12px;
             color: #6c757d;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .action-btn {
+            padding: 6px 12px;
+            border: 1px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 15px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .action-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .upload-container {
+            position: relative;
+        }
+        
+        #file-input {
+            display: none;
+        }
+        
+        .upload-progress {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: none;
+            z-index: 1000;
+        }
+        
+        .upload-progress.show {
+            display: block;
+            animation: slideIn 0.3s ease-out;
         }
 
         .status-indicator {
@@ -144,14 +201,129 @@
         }
 
         .assistant-text {
-            white-space: pre-wrap;
+            white-space: normal;
             word-wrap: break-word;
+            line-height: 1.8;
         }
 
         .assistant-text.typing::after {
             content: '▋';
             animation: blink 1s infinite;
             margin-left: 2px;
+        }
+        
+        /* Markdown渲染样式 */
+        .assistant-text h1,
+        .assistant-text h2,
+        .assistant-text h3,
+        .assistant-text h4 {
+            margin: 16px 0 12px 0;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+        
+        .assistant-text h1 {
+            font-size: 1.5em;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 8px;
+        }
+        
+        .assistant-text h2 {
+            font-size: 1.3em;
+            border-bottom: 1px solid #e9ecef;
+            padding-bottom: 6px;
+        }
+        
+        .assistant-text h3 {
+            font-size: 1.15em;
+        }
+        
+        .assistant-text p {
+            margin: 12px 0;
+        }
+        
+        .assistant-text ul,
+        .assistant-text ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+        
+        .assistant-text li {
+            margin: 6px 0;
+        }
+        
+        .assistant-text code {
+            background: #f6f8fa;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            color: #e83e8c;
+        }
+        
+        .assistant-text pre {
+            background: #282c34;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 12px 0;
+        }
+        
+        .assistant-text pre code {
+            background: none;
+            padding: 0;
+            color: #abb2bf;
+            font-size: 0.9em;
+        }
+        
+        .assistant-text blockquote {
+            border-left: 4px solid #667eea;
+            padding-left: 16px;
+            margin: 12px 0;
+            color: #6c757d;
+            font-style: italic;
+        }
+        
+        .assistant-text table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 12px 0;
+        }
+        
+        .assistant-text table th,
+        .assistant-text table td {
+            border: 1px solid #e9ecef;
+            padding: 8px 12px;
+            text-align: left;
+        }
+        
+        .assistant-text table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        
+        .assistant-text a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        
+        .assistant-text a:hover {
+            text-decoration: underline;
+        }
+        
+        .assistant-text strong {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .assistant-text em {
+            font-style: italic;
+        }
+        
+        .assistant-text hr {
+            border: none;
+            border-top: 1px solid #e9ecef;
+            margin: 16px 0;
         }
 
         @keyframes blink {
@@ -340,9 +512,26 @@
                 <div class="status-dot" id="status-dot"></div>
                 <span id="status-text">系统就绪</span>
             </div>
+            <div class="action-buttons">
+                <button class="action-btn" onclick="newConversation()" title="开始新对话">
+                    <span>🆕</span>
+                    <span>新对话</span>
+                </button>
+                <div class="upload-container">
+                    <button class="action-btn" onclick="document.getElementById('file-input').click()" title="上传PDF文档">
+                        <span>📄</span>
+                        <span>上传文档</span>
+                    </button>
+                    <input type="file" id="file-input" accept=".pdf" onchange="uploadDocument(event)">
+                </div>
+            </div>
             <div>
                 <span id="doc-info">文档已加载</span>
             </div>
+        </div>
+        
+        <div class="upload-progress" id="upload-progress">
+            <div>📤 正在上传文档...</div>
         </div>
 
         <div class="chat-area" id="chat-area">
@@ -380,6 +569,38 @@
     <script>
         const API_BASE_URL = 'http://localhost:8000';
         let isLoading = false;
+        let currentSessionId = null;  // 当前会话ID
+        
+        // Markdown渲染函数
+        function renderMarkdown(text) {
+            try {
+                // 配置marked选项（如果还未配置）
+                if (typeof marked !== 'undefined' && !marked._configured) {
+                    marked.setOptions({
+                        highlight: function(code, lang) {
+                            if (typeof hljs !== 'undefined') {
+                                if (lang && hljs.getLanguage(lang)) {
+                                    try {
+                                        return hljs.highlight(code, { language: lang }).value;
+                                    } catch (e) {
+                                        console.error('Highlight error:', e);
+                                    }
+                                }
+                                return hljs.highlightAuto(code).value;
+                            }
+                            return code;
+                        },
+                        breaks: true,  // 支持GFM换行
+                        gfm: true,     // 启用GitHub风格的Markdown
+                    });
+                    marked._configured = true;
+                }
+                return marked.parse(text);
+            } catch (e) {
+                console.error('Markdown parse error:', e);
+                return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');  // 如果解析失败，转义HTML并返回
+            }
+        }
 
         // 检查系统状态
         async function checkSystemStatus() {
@@ -443,7 +664,10 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ question: question })
+                    body: JSON.stringify({ 
+                        question: question,
+                        session_id: currentSessionId  // 传递session_id
+                    })
                 });
                 
                 if (!response.ok) {
@@ -470,9 +694,13 @@
                             try {
                                 const parsed = JSON.parse(data);
                                 
-                                if (parsed.type === 'token') {
+                                if (parsed.type === 'session_id') {
+                                    // 接收并保存session_id
+                                    currentSessionId = parsed.content;
+                                } else if (parsed.type === 'token') {
                                     fullAnswer += parsed.content;
-                                    contentDiv.textContent = fullAnswer;
+                                    // 渲染Markdown并显示
+                                    contentDiv.innerHTML = renderMarkdown(fullAnswer);
                                     // 自动滚动到底部
                                     const chatArea = document.getElementById('chat-area');
                                     chatArea.scrollTop = chatArea.scrollHeight;
@@ -515,9 +743,12 @@
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${type}`;
             
+            // 对assistant消息进行Markdown渲染
+            const renderedContent = type === 'assistant' ? renderMarkdown(content) : content;
+            
             let messageHTML = `
                 <div class="message-content">
-                    ${content}
+                    ${type === 'assistant' ? `<div class="assistant-text">${renderedContent}</div>` : renderedContent}
             `;
             
             if (sources && sources.length > 0) {
@@ -619,9 +850,131 @@
             document.getElementById('question-input').value = question;
             sendQuestion();
         }
+        
+        // 新建对话
+        async function newConversation() {
+            if (isLoading) return;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/session/new`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                currentSessionId = data.session_id;
+                
+                // 清空聊天区域
+                const chatArea = document.getElementById('chat-area');
+                chatArea.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+                            <path d="M7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z"/>
+                        </svg>
+                        <h3>新对话已开始 🎉</h3>
+                        <p>向我提问文档相关的任何问题</p>
+                        
+                        <div class="example-questions">
+                            <button class="example-btn" onclick="askQuestion('文档的主要内容是什么？')">文档主要内容</button>
+                            <button class="example-btn" onclick="askQuestion('请总结文档的核心观点')">核心观点</button>
+                            <button class="example-btn" onclick="askQuestion('文档中提到了哪些重要信息？')">重要信息</button>
+                        </div>
+                    </div>
+                `;
+                
+                // 显示提示
+                const statusText = document.getElementById('status-text');
+                const originalText = statusText.textContent;
+                statusText.textContent = '✅ 新对话已创建';
+                setTimeout(() => {
+                    statusText.textContent = originalText;
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showError('创建新对话失败');
+            }
+        }
+        
+        // 上传文档
+        async function uploadDocument(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // 验证文件类型
+            if (!file.name.endsWith('.pdf')) {
+                showError('只支持PDF文件格式');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // 显示上传进度
+            const uploadProgress = document.getElementById('upload-progress');
+            uploadProgress.classList.add('show');
+            uploadProgress.innerHTML = `<div>📤 正在上传 ${file.name}...</div>`;
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // 更新文档信息
+                    document.getElementById('doc-info').textContent = `文档: ${data.filename}`;
+                    
+                    uploadProgress.innerHTML = `<div>✅ ${data.filename} 上传成功！</div>`;
+                    
+                    // 创建新会话
+                    currentSessionId = null;
+                    
+                    // 清空聊天区域
+                    const chatArea = document.getElementById('chat-area');
+                    chatArea.innerHTML = `
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+                                <path d="M7 9h2v2H7zm4 0h2v2h-2zm4 0h2v2h-2z"/>
+                            </svg>
+                            <h3>新文档已加载 📄</h3>
+                            <p>开始提问关于新文档的问题</p>
+                            
+                            <div class="example-questions">
+                                <button class="example-btn" onclick="askQuestion('文档的主要内容是什么？')">文档主要内容</button>
+                                <button class="example-btn" onclick="askQuestion('请总结文档的核心观点')">核心观点</button>
+                                <button class="example-btn" onclick="askQuestion('文档中提到了哪些重要信息？')">重要信息</button>
+                            </div>
+                        </div>
+                    `;
+                    
+                    setTimeout(() => {
+                        uploadProgress.classList.remove('show');
+                    }, 2000);
+                } else {
+                    throw new Error(data.detail || '上传失败');
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                uploadProgress.innerHTML = `<div>❌ 上传失败: ${error.message}</div>`;
+                setTimeout(() => {
+                    uploadProgress.classList.remove('show');
+                }, 3000);
+            }
+            
+            // 清空文件输入
+            event.target.value = '';
+        }
 
-        // 页面加载时检查系统状态
-        window.addEventListener('load', () => {
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
             checkSystemStatus();
             document.getElementById('question-input').focus();
         });

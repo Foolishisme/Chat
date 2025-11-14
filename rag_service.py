@@ -138,12 +138,13 @@ class RAGService:
             "question": question
         }
     
-    def query_stream(self, question: str):
+    def query_stream(self, question: str, history_text: str = ""):
         """
-        执行流式RAG查询
+        执行流式RAG查询（支持对话历史）
         
         Args:
             question: 用户问题
+            history_text: 格式化的历史对话文本
             
         Yields:
             流式生成的文本块和来源文档
@@ -158,13 +159,13 @@ class RAGService:
         # 构建上下文
         context = "\n\n".join([doc.page_content for doc in docs])
         
-        # 构建提示词
-        prompt = f"""基于以下文档内容回答问题。如果文档中没有相关信息，请说明无法从文档中找到答案。
+        # 构建提示词（包含历史对话）
+        prompt = f"""基于以下文档内容和历史对话回答问题。如果文档中没有相关信息，请说明无法从文档中找到答案。
 
-文档内容:
+{history_text}文档内容:
 {context}
 
-问题: {question}
+当前问题: {question}
 
 答案:"""
         
@@ -188,6 +189,52 @@ class RAGService:
             "type": "sources",
             "content": sources
         }
+    
+    def load_document(self, pdf_path: str):
+        """
+        加载新文档并更新向量索引
+        
+        Args:
+            pdf_path: PDF文档路径
+        """
+        print(f"正在加载新文档: {pdf_path}")
+        
+        # 加载文档
+        loader = PyPDFLoader(pdf_path)
+        documents = loader.load()
+        print(f"成功加载 {len(documents)} 页文档")
+        
+        # 文本分割（使用优化策略）
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=600,
+            chunk_overlap=100,
+            length_function=len,
+        )
+        splits = text_splitter.split_documents(documents)
+        print(f"文档已分割为 {len(splits)} 个文本块")
+        
+        # 重建向量存储
+        print("正在重建向量索引...")
+        self.vectorstore = FAISS.from_documents(
+            documents=splits,
+            embedding=self.embeddings
+        )
+        
+        # 保存到磁盘
+        self.vectorstore.save_local(settings.chroma_persist_directory)
+        print("向量索引已保存")
+        
+        # 重建QA链
+        self.qa_chain = RetrievalQA.from_chain_type(
+            llm=self.llm,
+            chain_type="stuff",
+            retriever=self.vectorstore.as_retriever(
+                search_kwargs={"k": 5}
+            ),
+            return_source_documents=True
+        )
+        
+        print(f"文档 {pdf_path} 加载完成！")
     
     def reset_vectorstore(self):
         """重置向量数据库（重新加载文档）"""
