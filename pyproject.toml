@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "rag-chat-system"
+version = "0.1.0"
+description = "基于RAG的简单对话系统 - Hello World版本"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+python = "^3.10"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.109.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+langchain = "^0.1.0"
+langchain-google-genai = "^1.0.0"
+langchain-community = "^0.0.10"
+chromadb = "^0.4.22"
+pypdf = "^4.0.0"
+python-dotenv = "^1.0.0"
+pydantic = "^2.5.0"
+pydantic-settings = "^2.1.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+black = "^23.12.0"
+flake8 = "^7.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+

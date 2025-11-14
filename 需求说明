@@ -1,0 +1,18 @@
+任务：撰写RAG的“Hello,world”程序,生成简单的对话系统
+技术栈：
+1、Langchain
+2、Chorma数据库
+3、Gemini2.5flash API
+4、FastAPI
+5、包管理建议：
+   - 推荐使用 Poetry 或 pipenv 进行依赖管理和虚拟环境隔离，便于团队协作和依赖追溯。
+   - 明确项目所需的 Python 版本（如 Python 3.10 及以上）。
+6、接口规范与文档：
+   - 建议遵循 OpenAPI 规范，统一接口输入输出格式。
+   - 自动生成 Swagger 文档，方便前后端协作。
+7、先实现一个简单的RAG程序，然后在此基础上进行扩展，实现一个完整的RAG系统。
+8、API密钥给我留白，不要直接写死，方便后续扩展。
+9、前端采用python-fastapi实现，后端采用python-langchain实现。
+10、对话文档采用根目录下的 文档.PDF，实现一个简单的对话系统，对话内容在文档中。
+
+

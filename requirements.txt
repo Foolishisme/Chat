@@ -1,0 +1,21 @@
+# 这个文件是从pyproject.toml自动生成的
+# 推荐使用Poetry进行依赖管理: poetry install
+# 如果你更喜欢使用pip，可以使用这个文件: pip install -r requirements.txt
+
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+langchain>=0.1.0
+langchain-google-genai>=1.0.0
+langchain-community>=0.0.10
+sentence-transformers>=5.0.0
+faiss-cpu>=1.7.0
+pypdf>=4.0.0
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 性能分析和可视化
+matplotlib>=3.5.0
+pandas>=1.5.0
+streamlit>=1.28.0
+
