@@ -8,7 +8,10 @@ langchain>=0.1.0
 langchain-google-genai>=1.0.0
 langchain-community>=0.0.10
 sentence-transformers>=5.0.0
-faiss-cpu>=1.7.0
+# 向量数据库（已迁移到Qdrant）
+# faiss-cpu>=1.7.0  # 已弃用，使用Qdrant替代
+qdrant-client>=1.7.0
+langchain-qdrant>=0.1.0
 pypdf>=4.0.0
 python-dotenv>=1.0.0
 pydantic>=2.5.0
@@ -22,6 +25,11 @@ Pillow>=10.0.0
 # 多模态嵌入（CLIP）
 torch>=2.0.0
 transformers>=4.30.0
+
+# RAG评估和重排序
+sentence-transformers>=2.2.0
+ragas>=0.1.0
+datasets>=2.14.0
 
 # 性能分析和可视化
 matplotlib>=3.5.0

@@ -1,7 +1,7 @@
 """
-RAG服务实现 - V3 Qdrant版本
+RAG服务实现 - V2 多模态版本
 负责文档加载、向量化存储和检索增强生成（支持文本+图片）
-使用Qdrant作为向量数据库，支持混合检索
+使用CLIP直接向量化图片，检索时返回原图
 """
 import os
 import base64
@@ -9,25 +9,22 @@ from typing import List, Optional, Dict
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
-try:
-    from langchain_qdrant import QdrantVectorStore as Qdrant
-except ImportError:
-    from langchain_qdrant import Qdrant  # 兼容旧版本
+from langchain_community.vectorstores import FAISS
+from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.chains import RetrievalQA
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from langchain_core.embeddings import Embeddings
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
 import numpy as np
+import faiss
 
 from app.config import settings
 from app.services.image_processor import create_image_processor
 
 
 class CLIPImageEmbeddings(Embeddings):
-    """CLIP图片嵌入适配器，用于Qdrant"""
+    """CLIP图片嵌入适配器，用于FAISS"""
     
     def __init__(self, image_processor):
         self.image_processor = image_processor
@@ -43,13 +40,12 @@ class CLIPImageEmbeddings(Embeddings):
 
 
 class RAGService:
-    """RAG服务类 - 支持多模态（文本+图片），使用Qdrant"""
+    """RAG服务类 - 支持多模态（文本+图片）"""
     
     def __init__(self):
         """初始化RAG服务"""
         self.text_embeddings = None  # 文本嵌入模型
         self.image_processor = None  # 图片处理器（包含CLIP）
-        self.qdrant_client = None  # Qdrant客户端
         self.text_vectorstore = None  # 文本向量库
         self.image_vectorstore = None  # 图片向量库
         self.llm = None
@@ -57,29 +53,11 @@ class RAGService:
         self._initialized = False
         self._reranker = None  # Cross-Encoder重排序模型
         self.use_reranking = True  # 是否启用重排序
-        
-        # Qdrant集合名称
-        self.text_collection_name = "text_documents"
-        self.image_collection_name = "image_documents"
-    
-    def _init_qdrant_client(self):
-        """初始化Qdrant客户端（本地模式）"""
-        if self.qdrant_client is None:
-            # 使用本地文件存储，完全不需要网络或Docker
-            qdrant_path = os.path.join(settings.chroma_persist_directory, "qdrant_db")
-            os.makedirs(qdrant_path, exist_ok=True)
-            
-            self.qdrant_client = QdrantClient(path=qdrant_path)
-            print(f"✅ Qdrant客户端初始化完成（本地模式: {qdrant_path}）")
-        return self.qdrant_client
     
     def initialize(self):
         """初始化服务组件"""
         if self._initialized:
             return
-        
-        # 初始化Qdrant客户端
-        self._init_qdrant_client()
         
         # 初始化文本嵌入模型
         print("正在初始化文本embedding模型...")
@@ -102,29 +80,30 @@ class RAGService:
         )
         print("✅ 多模态LLM初始化完成（Gemini 2.0 Flash Exp）")
         
-        # 检查集合是否存在
-        collections = self.qdrant_client.get_collections().collections
-        collection_names = [c.name for c in collections]
+        # 检查向量数据库是否已存在
+        text_index_path = settings.chroma_persist_directory + "/text_index.faiss"
+        image_index_path = settings.chroma_persist_directory + "/image_index.faiss"
         
-        if self.text_collection_name in collection_names:
+        if os.path.exists(text_index_path):
             print("加载已有的文本向量数据库...")
-            self.text_vectorstore = Qdrant(
-                client=self.qdrant_client,
-                collection_name=self.text_collection_name,
-                embedding=self.text_embeddings
+            self.text_vectorstore = FAISS.load_local(
+                settings.chroma_persist_directory,
+                self.text_embeddings,
+                allow_dangerous_deserialization=True,
+                index_name="text_index"
             )
         
-        if self.image_collection_name in collection_names:
+        if os.path.exists(image_index_path):
             print("加载已有的图片向量数据库...")
             clip_embeddings = CLIPImageEmbeddings(self.image_processor)
-            self.image_vectorstore = Qdrant(
-                client=self.qdrant_client,
-                collection_name=self.image_collection_name,
-                embedding=clip_embeddings
+            self.image_vectorstore = FAISS.load_local(
+                settings.chroma_persist_directory,
+                clip_embeddings,
+                allow_dangerous_deserialization=True,
+                index_name="image_index"
             )
         
-        # 如果文本集合不存在，创建新的向量数据库
-        if self.text_collection_name not in collection_names:
+        if not os.path.exists(text_index_path):
             print("创建新的向量数据库...")
             self._load_and_index_documents()
         
@@ -223,45 +202,29 @@ class RAGService:
         print("\n开始处理PDF中的图片...")
         images_info = self.image_processor.process_pdf_images(settings.pdf_document_path)
         
-        # 4. 创建文本向量存储（384维）
+        # 4. 创建文本向量存储
         print("\n正在创建文本向量索引...")
-        # 先创建集合（如果不存在）
-        try:
-            self.qdrant_client.get_collection(self.text_collection_name)
-        except:
-            # 集合不存在，创建新集合
-            # 获取向量维度（从embedding模型）
-            sample_embedding = self.text_embeddings.embed_query("test")
-            dimension = len(sample_embedding)
-            
-            self.qdrant_client.create_collection(
-                collection_name=self.text_collection_name,
-                vectors_config=VectorParams(
-                    size=dimension,
-                    distance=Distance.COSINE
-                )
-            )
-            print(f"  创建文本集合: {self.text_collection_name} (维度: {dimension})")
-        
-        # 创建Qdrant向量库对象
-        self.text_vectorstore = Qdrant(
-            client=self.qdrant_client,
-            collection_name=self.text_collection_name,
+        self.text_vectorstore = FAISS.from_documents(
+            documents=text_splits,
             embedding=self.text_embeddings
         )
-        # 添加文档
-        self.text_vectorstore.add_documents(text_splits)
+        os.makedirs(settings.chroma_persist_directory, exist_ok=True)
+        self.text_vectorstore.save_local(
+            settings.chroma_persist_directory,
+            index_name="text_index"
+        )
         print(f"✅ 文本向量索引已保存 ({len(text_splits)} 个文本块)")
         
-        # 5. 创建图片向量存储（512维）
+        # 5. 创建图片向量存储（如果有图片）
         if images_info:
             print("\n正在创建图片向量索引（CLIP）...")
             
-            # 准备图片文档和向量
+            # 准备图片文档
             image_documents = []
-            image_embeddings = []
+            image_embeddings_list = []
             
             for img_info in images_info:
+                # 创建简短的文档对象
                 doc = Document(
                     page_content=f"[图片 - 第{img_info['page']}页]",
                     metadata={
@@ -275,66 +238,37 @@ class RAGService:
                     }
                 )
                 image_documents.append(doc)
-                image_embeddings.append(img_info['embedding'].tolist())
+                image_embeddings_list.append(img_info['embedding'])
             
-            # 创建图片集合（512维）
+            # 使用预计算的CLIP向量创建FAISS索引
             clip_embeddings = CLIPImageEmbeddings(self.image_processor)
             
-            # 使用Qdrant直接存储（需要手动创建集合和添加向量）
-            try:
-                # 删除旧集合（如果存在）
-                try:
-                    self.qdrant_client.delete_collection(self.image_collection_name)
-                except:
-                    pass
-                
-                # 创建新集合
-                self.qdrant_client.create_collection(
-                    collection_name=self.image_collection_name,
-                    vectors_config=VectorParams(
-                        size=512,  # CLIP向量维度
-                        distance=Distance.COSINE
-                    )
-                )
-                
-                # 添加向量和文档
-                points = []
-                for i, (doc, embedding) in enumerate(zip(image_documents, image_embeddings)):
-                    points.append(
-                        PointStruct(
-                            id=i,
-                            vector=embedding,
-                            payload={
-                                "page_content": doc.page_content,
-                                "page": doc.metadata.get("page"),
-                                "source": doc.metadata.get("source"),
-                                "image_path": doc.metadata.get("image_path"),
-                                "image_index": doc.metadata.get("image_index"),
-                                "type": doc.metadata.get("type"),
-                                "width": doc.metadata.get("width"),
-                                "height": doc.metadata.get("height")
-                            }
-                        )
-                    )
-                
-                # 批量上传
-                self.qdrant_client.upsert(
-                    collection_name=self.image_collection_name,
-                    points=points
-                )
-                
-                # 创建Qdrant向量库对象（用于检索）
-                self.image_vectorstore = Qdrant(
-                    client=self.qdrant_client,
-                    collection_name=self.image_collection_name,
-                    embedding=clip_embeddings
-                )
-                
-                print(f"✅ 图片向量索引已保存 ({len(image_documents)} 张图片)")
-            except Exception as e:
-                print(f"❌ 创建图片向量索引失败: {str(e)}")
-                import traceback
-                traceback.print_exc()
+            # 手动创建FAISS索引
+            dimension = 512  # CLIP向量维度
+            embeddings_array = np.array(image_embeddings_list, dtype=np.float32)
+            
+            # 创建FAISS索引
+            index = faiss.IndexFlatIP(dimension)  # 内积相似度
+            index.add(embeddings_array)
+            
+            # 创建文档存储
+            docstore = InMemoryDocstore({str(i): doc for i, doc in enumerate(image_documents)})
+            index_to_docstore_id = {i: str(i) for i in range(len(image_documents))}
+            
+            # 创建向量存储
+            self.image_vectorstore = FAISS(
+                embedding_function=clip_embeddings,
+                index=index,
+                docstore=docstore,
+                index_to_docstore_id=index_to_docstore_id
+            )
+            
+            # 保存图片向量存储
+            self.image_vectorstore.save_local(
+                settings.chroma_persist_directory,
+                index_name="image_index"
+            )
+            print(f"✅ 图片向量索引已保存 ({len(image_documents)} 张图片)")
         else:
             print("PDF中没有找到图片")
         
@@ -401,42 +335,13 @@ class RAGService:
         # 2. 检索相关图片（Top 2）
         image_docs = []
         image_paths = []
-        if self.image_vectorstore and self.image_processor:
+        if self.image_vectorstore:
             try:
-                # 使用CLIP将查询文本向量化
-                query_embedding = self.image_processor.get_text_embedding(question).tolist()
-                
-                # 直接使用QdrantClient搜索，避免retriever的payload解析问题
-                search_results = self.qdrant_client.search(
-                    collection_name=self.image_collection_name,
-                    query_vector=query_embedding,
-                    limit=2
-                )
-                
-                # 将搜索结果转换为Document对象
-                for result in search_results:
-                    payload = result.payload
-                    doc = Document(
-                        page_content=payload.get("page_content", f"[图片 - 第{payload.get('page', '未知')}页]"),
-                        metadata={
-                            "page": payload.get("page", "未知"),
-                            "source": payload.get("source", "image"),
-                            "image_path": payload.get("image_path", ""),
-                            "image_index": payload.get("image_index", 0),
-                            "type": payload.get("type", "image"),
-                            "width": payload.get("width", 0),
-                            "height": payload.get("height", 0)
-                        }
-                    )
-                    image_docs.append(doc)
-                    if payload.get("image_path"):
-                        image_paths.append(payload.get("image_path"))
-                
-                print(f"✅ 图片检索成功，找到 {len(image_docs)} 张相关图片")
+                image_retriever = self.image_vectorstore.as_retriever(search_kwargs={"k": 2})
+                image_docs = image_retriever.invoke(question)
+                image_paths = [doc.metadata.get("image_path") for doc in image_docs if doc.metadata.get("image_path")]
             except Exception as e:
-                print(f"❌ 图片检索失败: {str(e)}")
-                import traceback
-                traceback.print_exc()
+                print(f"图片检索失败: {str(e)}")
         
         # 3. 构建文本上下文
         text_context = "\n\n".join([doc.page_content for doc in text_docs])
@@ -532,31 +437,14 @@ class RAGService:
         
         # 4. 重建文本向量存储
         print("\n正在重建文本向量索引...")
-        # 删除旧集合（如果存在）
-        try:
-            self.qdrant_client.delete_collection(self.text_collection_name)
-        except:
-            pass
-        
-        # 创建新集合
-        sample_embedding = self.text_embeddings.embed_query("test")
-        dimension = len(sample_embedding)
-        self.qdrant_client.create_collection(
-            collection_name=self.text_collection_name,
-            vectors_config=VectorParams(
-                size=dimension,
-                distance=Distance.COSINE
-            )
-        )
-        
-        # 创建新的向量库对象
-        self.text_vectorstore = Qdrant(
-            client=self.qdrant_client,
-            collection_name=self.text_collection_name,
+        self.text_vectorstore = FAISS.from_documents(
+            documents=text_splits,
             embedding=self.text_embeddings
         )
-        # 添加文档
-        self.text_vectorstore.add_documents(text_splits)
+        self.text_vectorstore.save_local(
+            settings.chroma_persist_directory,
+            index_name="text_index"
+        )
         print(f"✅ 文本向量索引已保存")
         
         # 5. 重建图片向量存储
@@ -564,7 +452,7 @@ class RAGService:
             print("\n正在重建图片向量索引...")
             
             image_documents = []
-            image_embeddings = []
+            image_embeddings_list = []
             
             for img_info in images_info:
                 doc = Document(
@@ -580,64 +468,34 @@ class RAGService:
                     }
                 )
                 image_documents.append(doc)
-                image_embeddings.append(img_info['embedding'].tolist())
+                image_embeddings_list.append(img_info['embedding'])
             
-            # 删除旧集合
-            try:
-                self.qdrant_client.delete_collection(self.image_collection_name)
-            except:
-                pass
-            
-            # 创建新集合
-            self.qdrant_client.create_collection(
-                collection_name=self.image_collection_name,
-                vectors_config=VectorParams(
-                    size=512,
-                    distance=Distance.COSINE
-                )
-            )
-            
-            # 添加向量
-            points = []
-            for i, (doc, embedding) in enumerate(zip(image_documents, image_embeddings)):
-                points.append(
-                    PointStruct(
-                        id=i,
-                        vector=embedding,
-                        payload={
-                            "page_content": doc.page_content,
-                            "page": doc.metadata.get("page"),
-                            "source": doc.metadata.get("source"),
-                            "image_path": doc.metadata.get("image_path"),
-                            "image_index": doc.metadata.get("image_index"),
-                            "type": doc.metadata.get("type"),
-                            "width": doc.metadata.get("width"),
-                            "height": doc.metadata.get("height")
-                        }
-                    )
-                )
-            
-            self.qdrant_client.upsert(
-                collection_name=self.image_collection_name,
-                points=points
-            )
-            
-            # 创建向量库对象
+            # 创建图片向量存储
             clip_embeddings = CLIPImageEmbeddings(self.image_processor)
-            self.image_vectorstore = Qdrant(
-                client=self.qdrant_client,
-                collection_name=self.image_collection_name,
-                embedding=clip_embeddings
+            dimension = 512
+            embeddings_array = np.array(image_embeddings_list, dtype=np.float32)
+            
+            index = faiss.IndexFlatIP(dimension)
+            index.add(embeddings_array)
+            
+            docstore = InMemoryDocstore({str(i): doc for i, doc in enumerate(image_documents)})
+            index_to_docstore_id = {i: str(i) for i in range(len(image_documents))}
+            
+            self.image_vectorstore = FAISS(
+                embedding_function=clip_embeddings,
+                index=index,
+                docstore=docstore,
+                index_to_docstore_id=index_to_docstore_id
             )
             
+            self.image_vectorstore.save_local(
+                settings.chroma_persist_directory,
+                index_name="image_index"
+            )
             print(f"✅ 图片向量索引已保存 ({len(image_documents)} 张图片)")
         else:
             print("PDF中没有找到图片")
-            # 删除旧的图片集合
-            try:
-                self.qdrant_client.delete_collection(self.image_collection_name)
-            except:
-                pass
+            # 删除旧的图片索引
             self.image_vectorstore = None
         
         # 6. 重建QA链
