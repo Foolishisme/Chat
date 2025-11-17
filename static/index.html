@@ -632,7 +632,7 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://localhost:8000';
+        const API_BASE_URL = 'http://localhost:8100';
         let isLoading = false;
         let currentSessionId = null;  // 当前会话ID
         
@@ -670,7 +670,19 @@
         // 检查系统状态
         async function checkSystemStatus() {
             try {
-                const response = await fetch(`${API_BASE_URL}/health`);
+                // 创建带超时的fetch请求（5秒超时）
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+                
+                const response = await fetch(`${API_BASE_URL}/health`, {
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 const data = await response.json();
                 
                 const statusDot = document.getElementById('status-dot');
@@ -682,13 +694,24 @@
                 } else {
                     statusDot.className = 'status-dot loading';
                     statusText.textContent = '正在初始化...';
+                    // 继续检查，直到初始化完成
                     setTimeout(checkSystemStatus, 3000);
                 }
             } catch (error) {
+                console.error('健康检查失败:', error);
                 const statusDot = document.getElementById('status-dot');
                 const statusText = document.getElementById('status-text');
-                statusDot.className = 'status-dot error';
-                statusText.textContent = '连接失败';
+                
+                // 区分超时错误和其他错误
+                if (error.name === 'AbortError') {
+                    statusDot.className = 'status-dot error';
+                    statusText.textContent = '连接超时，请检查服务器是否运行';
+                } else {
+                    statusDot.className = 'status-dot error';
+                    statusText.textContent = '连接失败，请检查服务器是否运行';
+                }
+                // 5秒后重试
+                setTimeout(checkSystemStatus, 5000);
             }
         }
 
@@ -736,7 +759,11 @@
                 });
                 
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    if (response.status === 503) {
+                        throw new Error('RAG服务正在初始化，请稍候再试...');
+                    }
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
                 }
                 
                 const reader = response.body.getReader();
@@ -1067,7 +1094,10 @@
 
         // 页面加载完成后初始化
         document.addEventListener('DOMContentLoaded', () => {
-            checkSystemStatus();
+            // 延迟1秒后再进行健康检查，避免页面加载时立即阻塞
+            setTimeout(() => {
+                checkSystemStatus();
+            }, 1000);
             document.getElementById('question-input').focus();
         });
         

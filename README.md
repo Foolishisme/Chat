@@ -268,16 +268,16 @@ scripts\run.bat
 python -m app.main
 
 # 或使用 uvicorn
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload
 ```
 
 ### 6. 访问应用
 
 打开浏览器访问：
 
-- **Web界面**：http://localhost:8000
-- **API文档**：http://localhost:8000/docs
-- **健康检查**：http://localhost:8000/health
+- **Web界面**：http://localhost:8100
+- **API文档**：http://localhost:8100/docs
+- **健康检查**：http://localhost:8100/health
 
 ---
 
@@ -342,7 +342,7 @@ PDF_DOCUMENT_PATH=./data/documents/文档.pdf
 uvicorn.run(
     app,
     host="0.0.0.0",     # 监听地址
-    port=8000,          # 端口号
+    port=8100,          # 端口号
     reload=True,        # 热重载（开发模式）
     log_level="info"    # 日志级别
 )
@@ -398,7 +398,7 @@ GET /session/{session_id}/history
 DELETE /session/{session_id}
 ```
 
-详细 API 文档访问：http://localhost:8000/docs
+详细 API 文档访问：http://localhost:8100/docs
 
 ---
 
@@ -421,10 +421,10 @@ pytest --cov=app tests/
 
 ```bash
 # 测试健康检查
-curl http://localhost:8000/health
+curl http://localhost:8100/health
 
 # 测试对话接口
-curl -X POST http://localhost:8000/chat \
+curl -X POST http://localhost:8100/chat \
   -H "Content-Type: application/json" \
   -d '{"question":"测试问题"}'
 ```
@@ -529,7 +529,20 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 ## 📈 版本历史
 
-### V2.1.1（当前版本）- 2025-11-17
+### V2.1.3（当前版本）- 2025-11-17
+- 🔧 端口迁移：从8000迁移到8100
+  - 解决8000端口被占用问题
+  - 统一所有配置为8100端口
+  - 更新文档和前端配置
+
+### V2.1.2 - 2025-11-17
+- 🚀 前端优化：添加请求超时处理
+  - ⏱️ 5秒超时机制，避免页面无限加载
+  - 🔄 自动重试机制，提升用户体验
+  - 💬 改进错误提示，区分超时和连接失败
+  - ⏳ 延迟首次健康检查，避免阻塞页面加载
+
+### V2.1.1 - 2025-11-17
 - 🏗️ 项目重构：重组为分层架构
   - 代码模块化：`app/services/`、`app/models/`、`app/utils/`
   - 数据集中化：统一存放在 `data/` 目录
@@ -631,5 +644,51 @@ Made with ❤️ by [Your Name]
 - ✅ 数据集中化：统一管理，避免混乱
 - ✅ 配置独立化：环境变量集中管理
 - ✅ 符合规范：遵循 Python 最佳实践
+
+**测试结果**：
+- ✅ 配置加载测试：通过
+- ✅ 模块导入测试：通过
+- ✅ 路径检查测试：通过
+- ✅ FastAPI应用测试：通过（15个路由注册）
+- ✅ RAG服务测试：通过（所有方法完整）
+- ✅ 图片处理器测试：通过（所有方法完整）
+- ✅ 启动流程测试：通过（模块化启动正常）
+- ✅ 数据目录测试：通过（所有数据已迁移）
+
+详细测试报告：`docs/development/项目重组测试报告.md`
+
+**时间**：2025年11月17日
+
+---
+
+### 2025-11-17：前端超时处理优化
+
+**问题描述**：
+- 前端页面一直加载，无法进入
+- 健康检查请求无超时，服务器未响应时页面卡住
+
+**解决方案**：
+- ✅ 添加 `AbortController` 超时处理（5秒超时）
+- ✅ 改进错误处理，区分超时和连接失败
+- ✅ 延迟首次健康检查（1秒），避免阻塞页面加载
+- ✅ 添加自动重试机制（5秒后重试）
+
+**技术实现**：
+- 使用 `AbortController` API 实现请求超时
+- 使用 `setTimeout` 延迟首次检查
+- 改进错误提示，提供明确的用户反馈
+
+**优化效果**：
+- ✅ 页面不再无限加载
+- ✅ 5秒超时，快速反馈
+- ✅ 明确的错误提示
+- ✅ 自动重试机制
+
+**测试结果**：
+- ✅ 超时处理测试：通过
+- ✅ 正常连接测试：通过
+- ✅ 页面加载测试：通过
+
+详细文档：`docs/development/前端超时处理优化.md`
 
 **时间**：2025年11月17日

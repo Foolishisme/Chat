@@ -147,12 +147,25 @@ def format_history_for_prompt(history: List[Dict]) -> str:
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化RAG服务"""
+    import traceback
     try:
+        print("=" * 60)
         print("正在初始化RAG服务...")
+        print("=" * 60)
         rag_service.initialize()
-        print("RAG服务初始化成功！")
+        if rag_service._initialized:
+            print("=" * 60)
+            print("✅ RAG服务初始化成功！")
+            print("=" * 60)
+        else:
+            print("=" * 60)
+            print("⚠️  RAG服务初始化未完成（_initialized=False）")
+            print("=" * 60)
     except Exception as e:
-        print(f"RAG服务初始化失败: {str(e)}")
+        print("=" * 60)
+        print(f"❌ RAG服务初始化失败: {str(e)}")
+        print("=" * 60)
+        traceback.print_exc()
         # 不抛出异常，允许应用启动，但API调用时会返回错误
 
 
@@ -407,7 +420,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8100,
         reload=True,  # 开发模式下启用热重载
         log_level="info"
     )
