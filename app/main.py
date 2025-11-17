@@ -14,8 +14,8 @@ import json
 import uuid
 from datetime import datetime
 
-from rag_service import rag_service
-from config import settings
+from app.services.rag_service import rag_service
+from app.config import settings
 
 
 # 创建FastAPI应用
@@ -30,6 +30,10 @@ app = FastAPI(
 # 挂载静态文件目录
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# 挂载图片目录（用于显示提取的PDF图片）
+if os.path.exists("data/images"):
+    app.mount("/images", StaticFiles(directory="data/images"), name="images")
 
 # 配置CORS
 app.add_middleware(
@@ -401,7 +405,7 @@ async def reset_vectorstore():
 if __name__ == "__main__":
     # 运行FastAPI应用
     uvicorn.run(
-        "main:app",
+        "app.main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,  # 开发模式下启用热重载

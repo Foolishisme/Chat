@@ -19,36 +19,54 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual Environment
+# 虚拟环境
+env/
 venv/
 ENV/
-env/
-.venv
+env.bak/
+venv.bak/
 
-# Environment variables
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# 环境变量文件
 .env
 
-# IDE
-.vscode/
-.idea/
+# 数据文件
+data/documents/*.pdf
+data/images/*.jpeg
+data/images/*.jpg
+data/images/*.png
+data/vector_db/*
+
+# 测试文件
+test_*.py
+*_test.py
+
+# 日志文件
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# 临时文件
 *.swp
 *.swo
 *~
 
-# Chroma DB
-chroma_db/
-
-# Poetry
-poetry.lock
-
-# Performance Test Results
-result/
-performance_report_*.json
-performance_analysis_*.png
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
+# 模型缓存
+.cache/
+models/

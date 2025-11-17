@@ -12,15 +12,15 @@ class Settings(BaseSettings):
     # Google Gemini API Key
     google_api_key: str = Field(..., alias="GOOGLE_API_KEY")
     
-    # Chroma数据库持久化目录
+    # 向量数据库持久化目录
     chroma_persist_directory: str = Field(
-        default="./chroma_db",
+        default="./data/vector_db",
         alias="CHROMA_PERSIST_DIRECTORY"
     )
     
     # PDF文档路径
     pdf_document_path: str = Field(
-        default="./文档.pdf",
+        default="./data/documents/文档.pdf",
         alias="PDF_DOCUMENT_PATH"
     )
     
